@@ -1,6 +1,6 @@
 # nava-sepehr system
 
-A light liquid-glass HTML/CSS/JavaScript interface with a Python Flask REST API, SQLite persistence, and a command-line console. No frontend build tool required.
+A light liquid-glass HTML/CSS/JavaScript interface with a Go REST API, SQLite persistence, and a command-line console. No frontend build tool required.
 
 ## Run with Docker
 
@@ -15,21 +15,20 @@ docker compose logs -f web
 ./scripts/stop.sh
 ```
 
-The multi-stage Dockerfile builds dependencies in a separate stage and runs Gunicorn as a non-root user. A named volume persists the database and photos when the container is rebuilt or stopped. `docker compose down -v` deletes this data. The Compose port is bound to localhost by default.
+The multi-stage Dockerfile builds dependencies in a separate stage and runs a static Go binary as a non-root user. A named volume persists the database and photos when the container is rebuilt or stopped. `docker compose down -v` deletes this data. The Compose port is bound to localhost by default.
 
 ## Run without Docker
 
-Requires Python 3.13 (including venv support).
+Requires Go 1.24 or later and a C compiler (GCC/Clang) for the SQLite driver. Docker installs its build tools automatically.
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+go mod download
 ./scripts/test.sh
-python app.py serve
+go build -o student-console .
+./student-console serve
 ```
 
-Open http://localhost:8080. `python app.py list` prints the student collection; `python app.py summary` prints record counts. Set `DATA_DIR` to choose persistent storage (default `./data`). The development server is for local use; Docker uses Gunicorn.
+Open http://localhost:8080. `./student-console list` prints the student collection; `./student-console summary` prints record counts. Set `DATA_DIR` to choose persistent storage (default `./data`). The web server uses Go net/http with request timeouts.
 
 ## API
 
@@ -72,7 +71,7 @@ Replace the IDs with values returned by creation requests. Amounts use integer c
 - Registration: UUID, student foreign key, course, semester, status, fee in cents, timestamp. One registration per student/course/semester.
 - Payment: UUID, registration foreign key, positive amount in cents, method, unique reference, timestamp.
 
-SQL foreign keys and constraints enforce relationships. Collections are returned as JSON arrays; Python lists and dictionaries assemble nested profiles. GET collections currently return at most 500 records. Payment writes use an immediate transaction to prevent concurrent overpayment. SQLite WAL supports concurrent readers. Structured fields avoid floating-point currency errors and database queries use parameters.
+SQL foreign keys and constraints enforce relationships. Collections are returned as JSON arrays; Go slices and structs assemble nested profiles. GET collections currently return at most 500 records. Payment writes share a transaction and a single database connection to prevent concurrent overpayment within one process. SQLite WAL supports concurrent readers. Structured fields avoid floating-point currency errors and database queries use parameters.
 
 Requests and exceptions are logged to stdout with timestamps, methods, paths and status codes. Request bodies and personal fields are not logged. Photo requests are limited to 5 MiB including multipart overhead; PNG/JPEG signatures are checked and filenames are random. Signature checks do not perform complete image decoding.
 
@@ -82,10 +81,10 @@ Requests and exceptions are logged to stdout with timestamps, methods, paths and
 ./scripts/test.sh
 ```
 
-For Docker tests mount the test directory using:
+The Docker builder stage runs Go tests before compiling:
 
 ```sh
-docker compose run --rm --no-deps -v "$PWD/tests:/tests:ro" web python -m unittest discover -s /tests -v
+docker build --target builder -t nava-sepehr-tests .
 ```
 
 Tests cover student persistence and validation, duplicates, missing foreign keys, registration collections, payments and balances, uploads, size/type rejection, health, and security headers. See VERIFICATION.md for results from the build environment.
@@ -97,3 +96,7 @@ This is a local demonstration project without authentication or authorization. B
 ## API test console
 
 The browser includes an API test section with GET/POST methods, endpoint and JSON-body editors, example requests, HTTP status, response timing and formatted JSON output. Requests are limited to same-origin `/api/` paths. POST requests create real records and refresh the dashboard. Replace `STUDENT_ID` or `REGISTRATION_ID` in examples using IDs from GET responses. Photo uploads use the profile form.
+
+## Go backend
+
+The server uses `net/http`, `database/sql`, Go structs and slices, and the pinned `github.com/mattn/go-sqlite3` driver. The SQLite driver uses CGO; only the Docker build stage contains C build tools. The final image contains a compiled executable and static UI assets. Run one server process per database volume; CLI commands can read the same data. Existing databases from the earlier version use the same schema and do not need conversion. `/api/health` identifies the backend as `go`.
